@@ -45,6 +45,11 @@ const translations = {
         "events.noEvents": "Henüz planlanmış etkinlik yok.",
         "events.details": "Detaylar",
         "events.past": "Geçmiş Etkinlikler",
+        "events.detail.close": "Kapat",
+        "events.detail.date": "Tarih",
+        "events.detail.time": "Saat",
+        "events.detail.location": "Konum",
+        "events.detail.link": "Etkinlik Bağlantısı",
 
         // Game Jams page
         "gamejams.title": "Game Jam'ler",
@@ -210,6 +215,11 @@ const translations = {
         "events.noEvents": "No events planned yet.",
         "events.details": "Details",
         "events.past": "Past Events",
+        "events.detail.close": "Close",
+        "events.detail.date": "Date",
+        "events.detail.time": "Time",
+        "events.detail.location": "Location",
+        "events.detail.link": "Event Link",
 
         // Game Jams page
         "gamejams.title": "Game Jams",

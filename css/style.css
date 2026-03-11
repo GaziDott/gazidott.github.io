@@ -206,3 +206,74 @@ body {
     animation: shimmer 1.5s infinite;
     border-radius: 8px;
 }
+
+/* Event detail modal overlay */
+.event-detail-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9998;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+.event-detail-overlay.show {
+    opacity: 1;
+}
+
+.event-detail-card {
+    background: #1a1209;
+    border: 1px solid #493622;
+    border-radius: 16px;
+    max-width: 640px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    position: relative;
+    animation: fadeInUp 0.4s ease forwards;
+}
+
+.event-detail-card::-webkit-scrollbar {
+    width: 6px;
+}
+.event-detail-card::-webkit-scrollbar-thumb {
+    background: #493622;
+    border-radius: 3px;
+}
+
+.event-detail-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 10;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+.event-detail-close:hover {
+    background: rgba(244, 140, 37, 0.8);
+}
+
+@media (max-width: 640px) {
+    .event-detail-overlay {
+        padding: 8px;
+        align-items: flex-end;
+    }
+    .event-detail-card {
+        max-height: 95vh;
+        border-radius: 16px 16px 8px 8px;
+    }
+}

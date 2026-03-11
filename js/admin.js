@@ -186,8 +186,12 @@ async function uploadImageFile(file) {
 
 /**
  * Setup drag-and-drop image upload zone
+ * @param {string} dropZoneId
+ * @param {string} previewId
+ * @param {function} onImageSet
+ * @param {number|null} aspectRatio - forced aspect ratio for crop, null for free
  */
-function setupImageUpload(dropZoneId, previewId, onImageSet) {
+function setupImageUpload(dropZoneId, previewId, onImageSet, aspectRatio) {
     const dropZone = document.getElementById(dropZoneId);
     const preview = document.getElementById(previewId);
     if (!dropZone) return;
@@ -213,7 +217,7 @@ function setupImageUpload(dropZoneId, previewId, onImageSet) {
     dropZone.addEventListener('drop', async (e) => {
         const files = e.dataTransfer.files;
         if (files.length > 0 && files[0].type.startsWith('image/')) {
-            await handleImageFile(files[0], preview, onImageSet);
+            await handleImageFile(files[0], preview, onImageSet, aspectRatio);
         }
     });
 
@@ -224,7 +228,7 @@ function setupImageUpload(dropZoneId, previewId, onImageSet) {
         input.accept = 'image/*';
         input.onchange = async (e) => {
             if (e.target.files.length > 0) {
-                await handleImageFile(e.target.files[0], preview, onImageSet);
+                await handleImageFile(e.target.files[0], preview, onImageSet, aspectRatio);
             }
         };
         input.click();
@@ -232,9 +236,9 @@ function setupImageUpload(dropZoneId, previewId, onImageSet) {
 }
 
 /**
- * Handle an image file and show preview
+ * Handle an image file — opens crop modal before setting preview
  */
-async function handleImageFile(file, previewEl, onImageSet) {
+async function handleImageFile(file, previewEl, onImageSet, aspectRatio) {
     // Reject oversized files (2MB max in static mode)
     if (file.size > 2 * 1024 * 1024) {
         showToast(t('admin.imageSizeWarning'), 'error');
@@ -242,26 +246,18 @@ async function handleImageFile(file, previewEl, onImageSet) {
     }
 
     try {
-        // Show uploading state
-        if (previewEl) {
-            previewEl.classList.remove('hidden');
-            previewEl.style.opacity = '0.5';
-        }
-
-        // Convert to storable data URI
-        const url = await uploadImageFile(file);
-
-        if (previewEl) {
-            previewEl.src = url;
-            previewEl.style.opacity = '1';
-        }
-        if (onImageSet) onImageSet(url);
+        const dataUri = await uploadImageFile(file);
+        // Open crop modal; user must crop or cancel
+        openCropModal(dataUri, aspectRatio || null, (croppedUri) => {
+            if (previewEl) {
+                previewEl.src = croppedUri;
+                previewEl.classList.remove('hidden');
+                previewEl.style.opacity = '1';
+            }
+            if (onImageSet) onImageSet(croppedUri);
+        });
     } catch (err) {
         showToast(err.message || 'Image upload failed', 'error');
-        if (previewEl) {
-            previewEl.classList.add('hidden');
-            previewEl.style.opacity = '1';
-        }
     }
 }
 
@@ -287,6 +283,317 @@ function setupUrlInput(inputId, previewId, onImageSet) {
         if (onImageSet) onImageSet(url);
     });
 }
+
+/* ========================================
+   Image Crop Modal
+   ======================================== */
+
+let _cropState = null; // holds all transient crop state
+
+/**
+ * Open the crop modal with a given image source.
+ * @param {string} imageSrc - data URI or URL of the image
+ * @param {number|null} aspectRatio - forced aspect ratio (width/height), null for free crop
+ * @param {function} onCrop - callback receiving the cropped data URI
+ */
+function openCropModal(imageSrc, aspectRatio, onCrop) {
+    const overlay = document.getElementById('crop-overlay');
+    const canvas = document.getElementById('crop-canvas');
+    const wrapper = document.getElementById('crop-canvas-wrapper');
+    const sel = document.getElementById('crop-selection');
+    const info = document.getElementById('crop-info');
+    if (!overlay || !canvas || !wrapper || !sel) return;
+
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+
+    img.onload = () => {
+        // Compute display dimensions that fit inside the wrapper
+        const wrapRect = wrapper.getBoundingClientRect();
+        const maxW = wrapRect.width - 16;   // some padding
+        const maxH = wrapRect.height - 16;
+        let dw = img.naturalWidth;
+        let dh = img.naturalHeight;
+        const scale = Math.min(1, maxW / dw, maxH / dh);
+        dw = Math.round(dw * scale);
+        dh = Math.round(dh * scale);
+
+        canvas.width = dw;
+        canvas.height = dh;
+        ctx.drawImage(img, 0, 0, dw, dh);
+
+        // Initial crop selection: centered, 80% of the smaller dimension
+        let cropW, cropH;
+        if (aspectRatio) {
+            // Fit a box with this aspect ratio inside the canvas
+            if (dw / dh > aspectRatio) {
+                cropH = Math.round(dh * 0.8);
+                cropW = Math.round(cropH * aspectRatio);
+            } else {
+                cropW = Math.round(dw * 0.8);
+                cropH = Math.round(cropW / aspectRatio);
+            }
+        } else {
+            cropW = Math.round(dw * 0.8);
+            cropH = Math.round(dh * 0.8);
+        }
+
+        const cropX = Math.round((dw - cropW) / 2);
+        const cropY = Math.round((dh - cropH) / 2);
+
+        _cropState = {
+            img, ctx, canvas, wrapper, sel, info,
+            onCrop,
+            aspectRatio,
+            // Natural image dimensions for final export
+            natW: img.naturalWidth,
+            natH: img.naturalHeight,
+            // Display dimensions
+            dispW: dw,
+            dispH: dh,
+            // Crop rect in display coords
+            cx: cropX, cy: cropY, cw: cropW, ch: cropH,
+            // Interaction state
+            dragging: false,
+            resizing: null, // 'tl','tr','bl','br'
+            startX: 0, startY: 0,
+            startCx: 0, startCy: 0, startCw: 0, startCh: 0,
+        };
+
+        _updateCropSelection();
+        sel.style.display = 'block';
+        if (info) info.style.display = 'block';
+
+        // Show overlay
+        overlay.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    };
+
+    img.onerror = () => {
+        showToast('Görsel yüklenemedi', 'error');
+    };
+
+    img.src = imageSrc;
+
+    // Setup button handlers (re-bind each time to keep closure simple)
+    const applyBtn = document.getElementById('crop-apply-btn');
+    const cancelBtn1 = document.getElementById('crop-cancel-btn');
+    const cancelBtn2 = document.getElementById('crop-cancel-btn-2');
+
+    const handleApply = () => { applyCrop(); cleanup(); };
+    const handleCancel = () => { closeCropModal(); cleanup(); };
+    function cleanup() {
+        applyBtn.removeEventListener('click', handleApply);
+        cancelBtn1.removeEventListener('click', handleCancel);
+        cancelBtn2.removeEventListener('click', handleCancel);
+    }
+
+    applyBtn.addEventListener('click', handleApply);
+    cancelBtn1.addEventListener('click', handleCancel);
+    cancelBtn2.addEventListener('click', handleCancel);
+}
+
+function closeCropModal() {
+    const overlay = document.getElementById('crop-overlay');
+    if (overlay) overlay.classList.remove('active');
+    document.body.style.overflow = '';
+    _cropState = null;
+}
+
+function applyCrop() {
+    if (!_cropState) return;
+    const { img, cx, cy, cw, ch, dispW, dispH, natW, natH, onCrop } = _cropState;
+
+    // Convert display coords to natural image coords
+    const scaleX = natW / dispW;
+    const scaleY = natH / dispH;
+    const sx = Math.round(cx * scaleX);
+    const sy = Math.round(cy * scaleY);
+    const sw = Math.round(cw * scaleX);
+    const sh = Math.round(ch * scaleY);
+
+    // Draw cropped region to offscreen canvas
+    const offCanvas = document.createElement('canvas');
+    offCanvas.width = sw;
+    offCanvas.height = sh;
+    const offCtx = offCanvas.getContext('2d');
+    offCtx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+
+    const croppedUri = offCanvas.toDataURL('image/jpeg', 0.92);
+    closeCropModal();
+    if (onCrop) onCrop(croppedUri);
+}
+
+/** Position the crop selection div over the canvas */
+function _updateCropSelection() {
+    if (!_cropState) return;
+    const { sel, info, canvas, cx, cy, cw, ch, natW, natH, dispW, dispH } = _cropState;
+
+    // The selection is positioned relative to the wrapper.
+    // We need the canvas offset inside the wrapper.
+    const canvasRect = canvas.getBoundingClientRect();
+    const wrapRect = _cropState.wrapper.getBoundingClientRect();
+    const offX = canvasRect.left - wrapRect.left;
+    const offY = canvasRect.top - wrapRect.top;
+
+    sel.style.left = (offX + cx) + 'px';
+    sel.style.top = (offY + cy) + 'px';
+    sel.style.width = cw + 'px';
+    sel.style.height = ch + 'px';
+
+    // Show real pixel dimensions
+    if (info) {
+        const realW = Math.round(cw * (natW / dispW));
+        const realH = Math.round(ch * (natH / dispH));
+        info.textContent = `${realW} × ${realH} px`;
+    }
+}
+
+// ---- Pointer interaction for the crop selection ----
+
+function _getCropPointerPos(e) {
+    const touch = e.touches ? e.touches[0] : e;
+    const canvasRect = _cropState.canvas.getBoundingClientRect();
+    return {
+        x: touch.clientX - canvasRect.left,
+        y: touch.clientY - canvasRect.top
+    };
+}
+
+function _cropPointerDown(e) {
+    if (!_cropState) return;
+    const pos = _getCropPointerPos(e);
+    const { cx, cy, cw, ch } = _cropState;
+
+    // Check if on a handle (within 18px for touch)
+    const handleSize = (e.touches) ? 22 : 12;
+    const handles = [
+        { name: 'tl', hx: cx, hy: cy },
+        { name: 'tr', hx: cx + cw, hy: cy },
+        { name: 'bl', hx: cx, hy: cy + ch },
+        { name: 'br', hx: cx + cw, hy: cy + ch },
+    ];
+
+    let hitHandle = null;
+    for (const h of handles) {
+        if (Math.abs(pos.x - h.hx) < handleSize && Math.abs(pos.y - h.hy) < handleSize) {
+            hitHandle = h.name;
+            break;
+        }
+    }
+
+    // Check if inside the selection box
+    const inside = pos.x >= cx && pos.x <= cx + cw && pos.y >= cy && pos.y <= cy + ch;
+
+    if (hitHandle) {
+        _cropState.resizing = hitHandle;
+    } else if (inside) {
+        _cropState.dragging = true;
+    } else {
+        return; // outside — ignore
+    }
+
+    _cropState.startX = pos.x;
+    _cropState.startY = pos.y;
+    _cropState.startCx = cx;
+    _cropState.startCy = cy;
+    _cropState.startCw = cw;
+    _cropState.startCh = ch;
+
+    e.preventDefault();
+}
+
+function _cropPointerMove(e) {
+    if (!_cropState || (!_cropState.dragging && !_cropState.resizing)) return;
+    e.preventDefault();
+
+    const pos = _getCropPointerPos(e);
+    const dx = pos.x - _cropState.startX;
+    const dy = pos.y - _cropState.startY;
+    const { startCx, startCy, startCw, startCh, dispW, dispH, aspectRatio } = _cropState;
+    const MIN = 30;
+
+    if (_cropState.dragging) {
+        let nx = startCx + dx;
+        let ny = startCy + dy;
+        nx = Math.max(0, Math.min(nx, dispW - startCw));
+        ny = Math.max(0, Math.min(ny, dispH - startCh));
+        _cropState.cx = nx;
+        _cropState.cy = ny;
+    } else if (_cropState.resizing) {
+        let nx = startCx, ny = startCy, nw = startCw, nh = startCh;
+        const handle = _cropState.resizing;
+
+        if (handle === 'br') {
+            nw = Math.max(MIN, startCw + dx);
+            nh = aspectRatio ? nw / aspectRatio : Math.max(MIN, startCh + dy);
+        } else if (handle === 'bl') {
+            nw = Math.max(MIN, startCw - dx);
+            nh = aspectRatio ? nw / aspectRatio : Math.max(MIN, startCh + dy);
+            nx = startCx + startCw - nw;
+        } else if (handle === 'tr') {
+            nw = Math.max(MIN, startCw + dx);
+            nh = aspectRatio ? nw / aspectRatio : Math.max(MIN, startCh - dy);
+            ny = startCy + startCh - nh;
+        } else if (handle === 'tl') {
+            nw = Math.max(MIN, startCw - dx);
+            nh = aspectRatio ? nw / aspectRatio : Math.max(MIN, startCh - dy);
+            nx = startCx + startCw - nw;
+            ny = startCy + startCh - nh;
+        }
+
+        // Clamp to canvas bounds
+        if (nx < 0) { nw += nx; nx = 0; }
+        if (ny < 0) { nh += ny; ny = 0; }
+        if (nx + nw > dispW) nw = dispW - nx;
+        if (ny + nh > dispH) nh = dispH - ny;
+        if (aspectRatio) {
+            // Re-enforce aspect ratio after clamping
+            const minDim = Math.min(nw, nh * aspectRatio);
+            nw = minDim;
+            nh = nw / aspectRatio;
+        }
+        if (nw < MIN) nw = MIN;
+        if (nh < MIN) nh = MIN;
+
+        _cropState.cx = nx;
+        _cropState.cy = ny;
+        _cropState.cw = nw;
+        _cropState.ch = nh;
+    }
+
+    _updateCropSelection();
+}
+
+function _cropPointerUp() {
+    if (!_cropState) return;
+    _cropState.dragging = false;
+    _cropState.resizing = null;
+}
+
+// Attach global listeners for the crop canvas wrapper
+(function initCropListeners() {
+    document.addEventListener('DOMContentLoaded', () => {
+        const wrapper = document.getElementById('crop-canvas-wrapper');
+        if (!wrapper) return;
+
+        // Mouse
+        wrapper.addEventListener('mousedown', _cropPointerDown);
+        window.addEventListener('mousemove', _cropPointerMove);
+        window.addEventListener('mouseup', _cropPointerUp);
+
+        // Touch
+        wrapper.addEventListener('touchstart', _cropPointerDown, { passive: false });
+        window.addEventListener('touchmove', _cropPointerMove, { passive: false });
+        window.addEventListener('touchend', _cropPointerUp);
+
+        // Close on Escape
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && _cropState) closeCropModal();
+        });
+    });
+})();
 
 /* ========================================
    Admin Tab Navigation
@@ -1313,7 +1620,7 @@ function setupAdminForms() {
     // Image upload for events
     setupImageUpload('event-image-drop', 'event-image-preview', (img) => {
         currentEventImage = img;
-    });
+    }, null); // null = free crop
     setupUrlInput('event-image-url', 'event-image-preview', (url) => {
         currentEventImage = url;
     });
@@ -1321,7 +1628,7 @@ function setupAdminForms() {
     // Photo upload for team
     setupImageUpload('member-photo-drop', 'member-photo-preview', (img) => {
         currentMemberPhoto = img;
-    });
+    }, 1); // 1:1 square aspect ratio for team photos
 
     // Category cards (event form)
     document.querySelectorAll('.category-card').forEach(card => {

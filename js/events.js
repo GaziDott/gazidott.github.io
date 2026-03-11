@@ -200,9 +200,10 @@ function renderFeaturedCard(event) {
     const safeTime = escapeHTML(event.time);
     const safeLocation = escapeHTML(event.location);
     const safeLink = escapeHTML(event.link);
+    const safeId = escapeHTML(event.id);
 
     return `
-    <div class="group relative overflow-hidden rounded-xl bg-card-dark border border-border-dark hover:border-primary/50 transition-all shadow-md hover:shadow-xl hover:shadow-primary/5 card-hover">
+    <div class="group relative overflow-hidden rounded-xl bg-card-dark border border-border-dark hover:border-primary/50 transition-all shadow-md hover:shadow-xl hover:shadow-primary/5 card-hover cursor-pointer" onclick="showEventDetail('${safeId}')">
         <div class="flex flex-col sm:flex-row h-full">
             <div class="h-48 sm:h-auto sm:w-2/5 relative">
                 <div class="absolute inset-0 bg-cover bg-center transition-transform duration-500 group-hover:scale-110"
@@ -229,7 +230,7 @@ function renderFeaturedCard(event) {
                         <span class="material-symbols-outlined text-[16px]">location_on</span>
                         <span>${safeLocation || ''}</span>
                     </div>
-                    ${safeLink ? `<a href="${safeLink}" target="_blank" class="text-sm font-bold text-white bg-primary/10 hover:bg-primary px-3 py-1.5 rounded transition-colors border border-primary/20 hover:border-primary">${t('events.details')}</a>` : ''}
+                    ${safeLink ? `<a href="${safeLink}" target="_blank" onclick="event.stopPropagation()" class="text-sm font-bold text-white bg-primary/10 hover:bg-primary px-3 py-1.5 rounded transition-colors border border-primary/20 hover:border-primary">${t('events.details')}</a>` : ''}
                 </div>
             </div>
         </div>
@@ -247,9 +248,10 @@ function renderEventCard(event) {
     const safeLocation = escapeHTML(event.location);
     const safeLink = escapeHTML(event.link);
     const dayOfWeek = formatDayOfWeek(event.date);
+    const safeId = escapeHTML(event.id);
 
     return `
-    <div class="group rounded-2xl bg-card-dark border border-border-dark overflow-hidden hover:border-primary/40 transition-all card-hover shadow-lg hover:shadow-xl hover:shadow-primary/5">
+    <div class="group rounded-2xl bg-card-dark border border-border-dark overflow-hidden hover:border-primary/40 transition-all card-hover shadow-lg hover:shadow-xl hover:shadow-primary/5 cursor-pointer" onclick="showEventDetail('${safeId}')">
         <!-- Image -->
         <div class="relative h-52 w-full overflow-hidden">
             <div class="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-105"
@@ -294,7 +296,7 @@ function renderEventCard(event) {
             <!-- Day + Link row -->
             <div class="flex items-center justify-between pt-3 border-t border-border-dark/50">
                 <span class="text-xs text-text-muted/70 capitalize">${dayOfWeek}</span>
-                ${safeLink ? `<a href="${safeLink}" target="_blank" class="inline-flex items-center gap-1.5 text-sm font-bold text-white bg-primary/10 hover:bg-primary px-4 py-2 rounded-lg transition-colors border border-primary/20 hover:border-primary">
+                ${safeLink ? `<a href="${safeLink}" target="_blank" onclick="event.stopPropagation()" class="inline-flex items-center gap-1.5 text-sm font-bold text-white bg-primary/10 hover:bg-primary px-4 py-2 rounded-lg transition-colors border border-primary/20 hover:border-primary">
                     <span>${t('events.details')}</span>
                     <span class="material-symbols-outlined text-[16px]">arrow_forward</span>
                 </a>` : ''}
@@ -312,9 +314,10 @@ function renderPastEventRow(event) {
     const safeTitle = escapeHTML(getEventTitle(event));
     const safeLocation = escapeHTML(event.location);
     const safeLink = escapeHTML(event.link);
+    const safeId = escapeHTML(event.id);
 
     return `
-    <div class="block bg-card-dark/30 hover:bg-card-dark border border-transparent hover:border-border-dark rounded-lg p-3 sm:p-4 transition-colors">
+    <div class="block bg-card-dark/30 hover:bg-card-dark border border-transparent hover:border-border-dark rounded-lg p-3 sm:p-4 transition-colors cursor-pointer" onclick="showEventDetail('${safeId}')">
         <div class="flex items-start sm:items-center justify-between gap-2">
             <div class="flex items-start sm:items-center gap-2 sm:gap-4 flex-wrap min-w-0 flex-1">
                 <div class="bg-gray-800 text-gray-400 font-mono text-[10px] sm:text-xs px-2 py-1 rounded flex-shrink-0">${monthYear}</div>
@@ -322,9 +325,125 @@ function renderPastEventRow(event) {
                 ${getCategoryBadge(event.category)}
                 ${safeLocation ? `<span class="text-xs text-text-muted flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">location_on</span>${safeLocation}</span>` : ''}
             </div>
-            ${safeLink ? `<a href="${safeLink}" target="_blank" class="flex-shrink-0"><span class="material-symbols-outlined text-text-muted text-sm hover:text-primary transition-colors">chevron_right</span></a>` : ''}
+            <span class="material-symbols-outlined text-text-muted text-sm hover:text-primary transition-colors flex-shrink-0">chevron_right</span>
         </div>
     </div>`;
+}
+
+/**
+ * Show event detail modal
+ */
+function showEventDetail(eventId) {
+    const events = _eventsCache || [];
+    const event = events.find(e => e.id === eventId);
+    if (!event) return;
+
+    const safeImage = escapeHTML(event.image) || 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=600&q=80';
+    const safeTitle = escapeHTML(getEventTitle(event));
+    const safeDesc = escapeHTML(getEventDesc(event));
+    const safeTime = escapeHTML(event.time);
+    const safeLocation = escapeHTML(event.location);
+    const safeLink = escapeHTML(event.link);
+    const dayOfWeek = formatDayOfWeek(event.date);
+    const locationIcon = event.location?.toLowerCase() === 'online' || event.location?.toLowerCase() === 'çevrimiçi' ? 'videocam' : 'location_on';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'event-detail-overlay';
+    overlay.id = 'event-detail-overlay';
+    overlay.onclick = (e) => { if (e.target === overlay) closeEventDetail(); };
+
+    overlay.innerHTML = `
+    <div class="event-detail-card">
+        <button class="event-detail-close" onclick="closeEventDetail()" title="${t('events.detail.close')}">
+            <span class="material-symbols-outlined text-[20px]">close</span>
+        </button>
+
+        <!-- Image -->
+        ${safeImage ? `
+        <div class="relative w-full" style="max-height: 320px; overflow: hidden;">
+            <img src="${safeImage}" alt="${safeTitle}" class="w-full object-cover" style="max-height: 320px;" />
+            <div class="absolute inset-0 bg-gradient-to-t from-[#1a1209] via-transparent to-transparent"></div>
+        </div>` : ''}
+
+        <!-- Content -->
+        <div class="p-6 space-y-5">
+            <!-- Category Badge -->
+            <div class="flex items-center gap-2 flex-wrap">
+                ${getCategoryBadge(event.category)}
+                <span class="text-xs text-text-muted/70 capitalize">${dayOfWeek}</span>
+            </div>
+
+            <!-- Title -->
+            <h2 class="text-2xl sm:text-3xl font-bold text-white leading-tight">${safeTitle}</h2>
+
+            <!-- Info pills -->
+            <div class="flex flex-wrap gap-3">
+                <div class="flex items-center gap-2 text-sm text-text-muted bg-background-dark/60 px-3 py-2 rounded-lg border border-border-dark/30">
+                    <span class="material-symbols-outlined text-primary text-[18px]">calendar_today</span>
+                    <div>
+                        <div class="text-[10px] uppercase tracking-wider text-text-muted/60 font-medium">${t('events.detail.date')}</div>
+                        <div class="text-white">${formatDate(event.date)}</div>
+                    </div>
+                </div>
+                ${safeTime ? `
+                <div class="flex items-center gap-2 text-sm text-text-muted bg-background-dark/60 px-3 py-2 rounded-lg border border-border-dark/30">
+                    <span class="material-symbols-outlined text-primary text-[18px]">schedule</span>
+                    <div>
+                        <div class="text-[10px] uppercase tracking-wider text-text-muted/60 font-medium">${t('events.detail.time')}</div>
+                        <div class="text-white">${safeTime}</div>
+                    </div>
+                </div>` : ''}
+                ${safeLocation ? `
+                <div class="flex items-center gap-2 text-sm text-text-muted bg-background-dark/60 px-3 py-2 rounded-lg border border-border-dark/30">
+                    <span class="material-symbols-outlined text-primary text-[18px]">${locationIcon}</span>
+                    <div>
+                        <div class="text-[10px] uppercase tracking-wider text-text-muted/60 font-medium">${t('events.detail.location')}</div>
+                        <div class="text-white">${safeLocation}</div>
+                    </div>
+                </div>` : ''}
+            </div>
+
+            <!-- Description -->
+            ${safeDesc ? `<p class="text-sm sm:text-base text-text-muted leading-relaxed">${safeDesc}</p>` : ''}
+
+            <!-- Link -->
+            ${safeLink ? `
+            <a href="${safeLink}" target="_blank" class="inline-flex items-center gap-2 text-sm font-bold text-white bg-primary hover:bg-orange-400 px-5 py-2.5 rounded-lg transition-colors shadow-lg shadow-primary/20">
+                <span class="material-symbols-outlined text-[18px]">open_in_new</span>
+                <span>${t('events.detail.link')}</span>
+            </a>` : ''}
+        </div>
+    </div>`;
+
+    document.body.appendChild(overlay);
+    document.body.style.overflow = 'hidden';
+    // Trigger transition
+    requestAnimationFrame(() => overlay.classList.add('show'));
+
+    // Close on Escape key
+    const escHandler = (e) => {
+        if (e.key === 'Escape') {
+            closeEventDetail();
+            document.removeEventListener('keydown', escHandler);
+        }
+    };
+    document.addEventListener('keydown', escHandler);
+}
+
+/**
+ * Close event detail modal
+ */
+function closeEventDetail() {
+    const overlay = document.getElementById('event-detail-overlay');
+    if (!overlay) return;
+    overlay.classList.remove('show');
+    setTimeout(() => {
+        overlay.remove();
+        // Only restore scroll if no other modals are open
+        if (!document.querySelector('.event-detail-overlay')) {
+            document.body.style.overflow = '';
+        }
+    }, 300);
 }
 
 /**
